@@ -34,7 +34,7 @@ class Ball_filter:
 
         frame[:h, :w,] *= overlay_mask
         frame += cur_image
-        time_dif = (datetime.now() - self.frame_change_time).microseconds 
+        time_dif = (datetime.now() - self.frame_change_time).microseconds
         #print(time_dif)
         if (time_dif >= self.frame_t_delta):
             self.cur_frame = (self.cur_frame + 1) % self.frame_total
