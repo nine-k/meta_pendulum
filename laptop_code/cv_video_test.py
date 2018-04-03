@@ -1,8 +1,7 @@
 import numpy as np
 import cv2
 from math import floor, ceil
-
-cap = cv2.VideoCapture(0)
+import effects
 
 def frame_multiply(frame):
     small_frame = cv2.resize(frame, None, fx=1/6, fy=1/6, interpolation=cv2.INTER_AREA)
@@ -41,14 +40,13 @@ def distort_frame(frame, direction):
 
 
 # out = cv2.VideoWriter('right_noglitch.avi',cv2.VideoWriter_fourcc('M','J','P','G'), 10, (640,480))
+cap = cv2.VideoCapture(0)
+b_filter = effects.Ball_filter("../png/")
 
 while True:
     ret, frame = cap.read()
-#    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame = distort_frame(frame, 'r')
     print(frame.shape)
- #   out.write(frame)
-    cv2.imshow('frame', frame)
+    cv2.imshow('frame', b_filter.apply_filter(frame))
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
