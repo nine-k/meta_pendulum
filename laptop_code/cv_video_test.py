@@ -39,14 +39,19 @@ def distort_frame(frame, direction):
     return res_frame
 
 
-# out = cv2.VideoWriter('right_noglitch.avi',cv2.VideoWriter_fourcc('M','J','P','G'), 10, (640,480))
+out = cv2.VideoWriter('pixels.avi',cv2.VideoWriter_fourcc('M','J','P','G'), 10, (640,480))
 cap = cv2.VideoCapture(0)
-b_filter = effects.Ball_filter("../png/")
+#frame_filter = effects.Ball_filter("../png/")
+#frame_filter = effects.Motion_blur_filter(memory_window=20)
+#frame_filter = effects.Displacement_mapping_filter("circle.png", (0,20))
+#frame_filter = effects.Horizontal_distort_effect()
+frame_filter = effects.Pixelate_grad_filter(1, 30)
 
 while True:
     ret, frame = cap.read()
-    print(frame.shape)
-    cv2.imshow('frame', b_filter.apply_filter(frame))
+    frame = frame_filter.apply_filter(frame)
+    cv2.imshow('frame', frame)
+    out.write(frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
