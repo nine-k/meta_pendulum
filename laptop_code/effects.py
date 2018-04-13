@@ -40,7 +40,8 @@ class Png_overlay_filter:
         cur_image = self.image_seq[self.cur_frame]
         overlay_mask = self.image_overlay[self.cur_frame]
 
-        overlay_mask = np.repeat(overlay_mask, 3).reshape((480, 640, 3))
+        #overlay_mask = np.repeat(overlay_mask, 3).reshape((480, 640, 3))
+        overlay_mask = overlay_mask[:,:,None]
         #frame *= (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
         #frame += (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
         frame = (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
@@ -273,3 +274,77 @@ class White_noise_filter:
             frame[:,:,i] = (self.noise[:, :, self.number] * (1 - self.layer_weights[i]) +
                             frame[:,:,i] * self.layer_weights[i]).astype("uint8")
         return frame
+
+class Circle_filter:
+    def __init__(self, size=DEFAULT_SIZE, radius=100, angle=20):
+        tmp = (size[1], size[0])
+        self.shape = tmp
+        self.circle_filter = np.zeros(tmp, dtype="uint8")
+        self.circle_filter = cv2.circle(self.circle_filter, (tmp[1] // 2, tmp[0] // 2), radius, 1, thickness=-1)
+        self.circle_filter = self.circle_filter[:,:,None]
+        self.circle_filter_outer = 1 - self.circle_filter
+        #self.circle_filter_outer = np.ones(tmp, dtype="uint8")
+        #self.circle_filter_outer = cv2.circle(self.circle_filter_outer, (tmp[1] // 2, tmp[0] // 2), radius, 0, thickness=-1)
+        #self.circle_filter_outer = self.circle_filter_outer[:,:,None]
+        self.angle = angle
+        self.rot_matrix = cv2.getRotationMatrix2D((tmp[1]//2, tmp[0]//2),  angle, 1)
+
+    def set_angle(self, angle):
+        self.rot_matrix = cv2.getRotationMatrix2D((self.shape[1]//2, self.shape[0]//2),  angle, 1)
+        self.angle = angle
+
+    def apply_filter(self, frame):
+        frame_comp = cv2.warpAffine(frame, self.rot_matrix, (self.shape[1], self.shape[0]))
+        frame_comp *= self.circle_filter
+        frame *= self.circle_filter_outer
+        return frame_comp + frame
+
+class Circle_grad_filter:
+    def __init__(self, angle_delta=4, time_delta=0.1*10**5):
+        self.prev_change_time = datetime.now()
+        self.angle_delta = angle_delta
+        self.circle_filter = Circle_filter(radius=150, angle=0)
+        self.time_per_angle = time_delta
+
+    def apply_filter(self, frame):
+        time_dif = (datetime.now() - self.prev_change_time).microseconds
+        if (time_dif >= self.time_per_angle):
+            self.circle_filter.set_angle(self.angle_delta + self.circle_filter.angle)
+            if self.circle_filter.angle >= 360:
+                self.circle_filter.set_angle(- self.circle_filter.angle - 360)
+            self.prev_change_time = datetime.now()
+        return self.circle_filter.apply_filter(frame)
+
+#TODO FIX CIRCLE OUTLINE
+
+#class Circle_filter:
+#    def __init__(self, size=DEFAULT_SIZE, radius=100, angle=20):
+#        tmp = (size[1], size[0])
+#        self.shape = tmp
+#        self.circle_filter = np.zeros(tmp, dtype="uint8")
+#        self.circle_filter = cv2.circle(self.circle_filter, (tmp[1] // 2, tmp[0] // 2), radius + 2, 1, thickness=-1)
+#        self.circle_filter = self.circle_filter[:,:,None]
+#        self.circle_filter_outer = np.ones(tmp, dtype="uint8")
+#        self.circle_filter_outer = cv2.circle(self.circle_filter_outer, (tmp[1] // 2, tmp[0] // 2), radius, 1, thickness=-1)
+#        self.circle_filter_outer = self.circle_filter_outer[:,:,None]
+#        self.angle = angle
+#        self.rot_matrix = cv2.getRotationMatrix2D((tmp[1]//2, tmp[0]//2),  angle, 1)
+#
+#    def apply_filter(self, frame):
+#        frame_comp = frame * (1 - self.circle_filter)
+#        frame_comp = cv2.warpAffine(frame_comp, self.rot_matrix, (self.shape[1], self.shape[0]))
+#        frame *= self.circle_filter_outer
+#        return frame_comp + frame
+
+class Color_plane_filter:
+    def __init__(self, color=(0xb4, 0x69, 0xff)):
+        self.color = np.array(color, dtype="double")
+
+    def apply_filter(self, frame):
+        #calc projection
+        #frame = 255 - frame
+        #proj_coeffs = np.dot(frame, self.color) / np.dot(self.color, self.color)
+        proj_coeffs = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) / 255
+        for i in range(3):
+            frame[:,:,i] = proj_coeffs * self.color[i]
+        return frame.astype("uint8")
