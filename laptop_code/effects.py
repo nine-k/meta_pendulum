@@ -6,9 +6,9 @@ from datetime import timedelta
 from collections import deque
 from tqdm import tqdm
 
-#DEFAULT_SIZE = (640, 480)
+DEFAULT_SIZE = (640, 480)
 #DEFAULT_SIZE = (1600, 900)
-DEFAULT_SIZE = (1920, 1080)
+#DEFAULT_SIZE = (1920, 1080)
 
 def alpha_add(dst, dst_a, src, src_a): #alpha channels contain values from 0 to 255
     tmp = src.astype("int32")
@@ -16,6 +16,11 @@ def alpha_add(dst, dst_a, src, src_a): #alpha channels contain values from 0 to 
     tmp += dst.astype("int32") * dst_a
     dst[:,:,:] = (tmp // 255).astype("uint8")
 
+class No_filter:
+    def __init__(self):
+        pass
+    def apply_filter(self, frame):
+        return frame
 
 class Png_overlay_filter:
     def __init__(self, png_dir, fps=29,
@@ -52,14 +57,14 @@ class Png_overlay_filter:
     def apply_filter(self, frame):
         cur_image = cv2.resize(self.image_seq[self.cur_frame], self.fr_size, interpolation=cv2.INTER_NEAREST)
         overlay_mask = cv2.resize(self.image_overlay[self.cur_frame], self.fr_size, interpolation=cv2.INTER_NEAREST)
-        #overlay_mask = self.image_overlay[self.cur_frame] 
+        #overlay_mask = self.image_overlay[self.cur_frame]
 
         #overlay_mask = np.repeat(overlay_mask, 3).reshape((480, 640, 3))
         overlay_mask = overlay_mask[:,:,None]
         #frame *= (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
         #frame += (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
         #frame[:,:,:] = (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
-        alpha_add(frame, (1 - overlay_mask), cur_image, overlay_mask)
+        alpha_add(frame, (255 - overlay_mask), cur_image, overlay_mask)
         time_dif = (datetime.now() - self.frame_change_time).microseconds
         #print(time_dif)
         if (time_dif >= self.frame_t_delta):
@@ -372,3 +377,47 @@ class RGB_shift_filter:
         frame[:,:,1] = np.pad(frame[:,:,1], ((self.G_SHIFT, 0), (0, 0)), 'constant', constant_values=(0))[:-self.G_SHIFT,:]
         frame[:,:,2] = np.pad(frame[:,:,2], ((0, self.B_SHIFT), (0, 0)), 'constant', constant_values=(0))[self.B_SHIFT:,:]
         return frame
+
+class Kaleidoscope_filter:
+    def __init__(self, HOR=True, VERT=False, size=DEFAULT_SIZE):
+        self.fr_size = size
+        self.hor = HOR
+        self.vert = VERT
+
+
+    def apply_filter(self, frame):
+        if self.hor:
+            frame[self.fr_size[1] // 2:,:,:] = cv2.flip(frame, 0)[self.fr_size[1] // 2:,:,:] #HOR FLIP
+        if self.vert:
+            frame[:, self.fr_size[0] // 2:,:] = cv2.flip(frame, 1)[:,self.fr_size[0] // 2:,:] #VER FLIP
+
+class Kaleidoscope8_filter:
+    def __init__(self, size=DEFAULT_SIZE):
+        self.fr_size = size
+        self.target_side = min(size[0], size[1]) // 2
+        self.diag_filter = np.ones((self.target_side, self.target_side), dtype="uint8")
+        self.diag_filter = np.triu(self.diag_filter)[:,:,None]
+#        self.rot_matrix = cv2.getRotationMatrix2D((0, self.target_side),  -45, 1)
+
+    def apply_filter(self, frame):
+        fragment = frame[:self.target_side,
+                                        self.fr_size[0] // 2 - self.target_side:self.fr_size[0] // 2,
+                                        :] * self.diag_filter
+        comp = np.empty(fragment.shape, "uint8")
+        for i in range(3):
+            comp[:,:,i] = np.triu(fragment[:,:,i], 1).T
+        fragment += comp
+        fragment = np.concatenate((fragment, cv2.flip(fragment, 1)), 1)
+        fragment = np.concatenate((fragment, cv2.flip(fragment, 0)), 0)
+        #print(fragment.shape)
+#        frame[:self.target_side, :self.target_side,] = fragment
+#        frame[:self.target_side, :self.target_side,] =
+        u_border = (self.fr_size[1] - self.target_side * 2) // 2
+        l_border = (self.fr_size[0] - self.target_side * 2) // 2
+        frame[u_border:self.fr_size[1] - u_border, l_border:self.fr_size[0] - l_border,:] = fragment
+        frame[:self.fr_size[1] // 2,:l_border,:] = cv2.flip(frame[self.fr_size[1] // 2:, :l_border,:], 0)
+        frame[:self.fr_size[1] // 2,self.fr_size[0] - l_border:,:] = cv2.flip(frame[self.fr_size[1] // 2:,
+                                                                                    self.fr_size[0] - l_border:,
+                                                                                    :], 0)
+
+
