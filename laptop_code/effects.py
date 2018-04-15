@@ -158,7 +158,7 @@ class Pixelate_filter:
         self.pixel_size = pixel_size
         self.fr_size = fr_size
 
-    def change_grain(sz):
+    def change_grain(self, sz):
         self.pixel_size = sz
 
     def apply_filter(self, frame):
@@ -332,8 +332,6 @@ class Circle_grad_filter:
             self.prev_change_time = datetime.now()
         self.circle_filter.apply_filter(frame)
 
-#TODO FIX CIRCLE OUTLINE
-
 #class Circle_filter:
 #    def __init__(self, size=DEFAULT_SIZE, radius=100, angle=20):
 #        tmp = (size[1], size[0])
@@ -397,7 +395,6 @@ class Kaleidoscope8_filter:
         self.target_side = min(size[0], size[1]) // 2
         self.diag_filter = np.ones((self.target_side, self.target_side), dtype="uint8")
         self.diag_filter = np.triu(self.diag_filter)[:,:,None]
-#        self.rot_matrix = cv2.getRotationMatrix2D((0, self.target_side),  -45, 1)
 
     def apply_filter(self, frame):
         fragment = frame[:self.target_side,
@@ -409,9 +406,6 @@ class Kaleidoscope8_filter:
         fragment += comp
         fragment = np.concatenate((fragment, cv2.flip(fragment, 1)), 1)
         fragment = np.concatenate((fragment, cv2.flip(fragment, 0)), 0)
-        #print(fragment.shape)
-#        frame[:self.target_side, :self.target_side,] = fragment
-#        frame[:self.target_side, :self.target_side,] =
         u_border = (self.fr_size[1] - self.target_side * 2) // 2
         l_border = (self.fr_size[0] - self.target_side * 2) // 2
         frame[u_border:self.fr_size[1] - u_border, l_border:self.fr_size[0] - l_border,:] = fragment
@@ -420,4 +414,15 @@ class Kaleidoscope8_filter:
                                                                                     self.fr_size[0] - l_border:,
                                                                                     :], 0)
 
+
+class Effects_generator:
+    def __init__(self, ):
+        self.direction = 0 #-1 left, 0 static, 1 right
+        self.dist = 0 #val from 0 to TODO
+        self.filters = list()
+        self.filters.append(Circle_grad_fliter()) #0 the further it is the greater the speed
+        self.filters.append(Displacement_filter("PATH TO BALLS", (0, 50)))
+
+    def apply_filter(self, frame):
+        pass
 
