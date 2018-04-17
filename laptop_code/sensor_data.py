@@ -6,13 +6,34 @@ import time
 from scipy.signal import medfilt
 from collections import deque
 
+class Sensor_d:
+    def __init__(self, delta=200):
+        self.values = np.array([0] * 6)
+        self.sensor_values_raw = np.array([0] * 6)
+        self.delta = delta
+        self.grow = True
+
+    def parse_and_filter(self):
+        time.sleep(0.01)
+        if self.grow:
+            self.sensor_values_raw += self.delta
+        else:
+            self.sensor_values_raw -= self.delta
+        if (self.sensor_values_raw[0] >= 9000):
+            self.grow = False
+        if (self.sensor_values_raw[0] <= -9000):
+            self.grow = True
+        self.values[3] = self.sensor_values_raw[3]
+        if (abs(self.sensor_values_raw[3]) < 500):
+            self.values[3] = 0
+
 
 class Sensor:
     def __init__(
                  self,
                  filter_window=11,
                  offsets=(0, 0, 0, -2000, 0, 0),
-                 NAME="/dev/ttyACM0",
+                 NAME="/dev/ttyACM1",
                  ZERO_THRESH = (300, 500) #gyro, axel
                 ):
         self.filter_window = filter_window
