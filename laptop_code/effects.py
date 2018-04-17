@@ -6,9 +6,9 @@ from datetime import timedelta
 from collections import deque
 from tqdm import tqdm
 
-DEFAULT_SIZE = (640, 480)
+#DEFAULT_SIZE = (640, 480)
 #DEFAULT_SIZE = (1600, 900)
-#DEFAULT_SIZE = (1920, 1080)
+DEFAULT_SIZE = (1920, 1080)
 
 def alpha_add(dst, dst_a, src, src_a): #alpha channels contain values from 0 to 255
     tmp = src.astype("int32")
@@ -19,8 +19,12 @@ def alpha_add(dst, dst_a, src, src_a): #alpha channels contain values from 0 to 
 class No_filter:
     def __init__(self):
         pass
+    def reset(self):
+        pass
+    def set_intensity(self, inte):
+        pass
     def apply_filter(self, frame):
-        return frame
+        pass
 
 class Png_overlay_filter:
     def __init__(self, png_dir, fps=29,
@@ -80,6 +84,12 @@ class Motion_blur_filter:
         self.memory_frame = np.zeros((size[1], size[0], 3), dtype="uint8")
         self.alpha = alpha
 
+    def set_intensity(self, intensity):
+        self.alpha = 0.0 + (1 - intensity) * 1.0
+
+    def reset(self):
+        pass
+
     def apply_filter(self, frame):
         self.memory.append(frame)
         #self.memory_frame += (frame / self.memory_window)
@@ -87,8 +97,6 @@ class Motion_blur_filter:
                                                   frame, 1 / self.memory_window, 0)
         if len(self.memory) > self.memory_window:
             #self.memory_frame -= (self.memory[0] / self.memory_window)
-            print(self.memory[0].shape)
-            print(self.memory_frame.shape)
             self.memory_frame[:,:,:] = cv2.addWeighted(self.memory_frame, 1,
                                         self.memory[0], -1/self.memory_window, 0)
             self.memory.popleft()
@@ -116,12 +124,51 @@ class Displacement_mapping_filter:
         frame *= self.template_mask_inv
         frame += template_frame
 
+class Displacement_zoom_filter:
+    def __init__(self, template_name, offset=(40,40), frame_size=DEFAULT_SIZE, max_zoom=2):
+        tmp = cv2.imread(template_name)
+        tmp = cv2.resize(tmp, frame_size, interpolation=cv2.INTER_AREA)
+        self.tmp = template_name
+
+        overlay_mask = cv2.cvtColor(tmp, cv2.COLOR_BGR2GRAY)
+
+        self.template_mask = cv2.threshold(overlay_mask, 10, 1, cv2.THRESH_BINARY_INV)[1][:,:,None]
+        self.mask = cv2.threshold(overlay_mask, 10, 1, cv2.THRESH_BINARY_INV)[1][:,:,None]
+
+        self.offset = np.array(offset)
+        self.max_zoom = max_zoom
+        self.fr_size = np.array(frame_size, dtype="int")
+
+    def set_intensity(self, intensity):
+        gain = 1 + intensity * self.max_zoom
+        borders = (gain * self.fr_size - self.fr_size) / 2
+        borders = borders.astype("int")
+        self.mask = cv2.resize(self.template_mask, None, fx=gain, fy=gain,
+                                        interpolation=cv2.INTER_AREA)[borders[1]:borders[1] + self.template_mask.shape[0],
+                                                                      borders[0]:borders[0] + self.template_mask.shape[1],
+                                                                      None]
+    def reset(self):
+        pass
+
+    def apply_filter(self, frame):
+        template_frame = frame * self.mask
+        template_frame = np.roll(template_frame, self.offset, (0, 1))
+        frame *= np.roll((1 - self.mask), self.offset, (0, 1))
+        frame += template_frame
+
 class Horizontal_distort_effect:
-    def __init__(self, lo=0, hi=10, frame_size=DEFAULT_SIZE):
+    def __init__(self, lo=0, hi=10, frame_size=DEFAULT_SIZE, MAX=50):
         self.offsets = np.random.randint(lo, hi, frame_size[1], "int8")
         self.lo = lo
         self.hi = hi
+        self.MAX = MAX
         self.frame_size = frame_size
+
+    def set_intensity(self, intensity):
+        self.hi = int(self.MAX * intensity) + self.lo + 1
+
+    def reset(self):
+        pass
 
     def apply_filter(self, frame):
         self.offsets = np.random.randint(self.lo, self.hi, self.frame_size[1], "int8")
@@ -142,24 +189,52 @@ class Horizontal_sin_effect:
         return frame
 
 class Vertical_sin_effect:
-    def __init__(self, delta=0.08, phase_delta=0.1, val_range=3, frame_size=DEFAULT_SIZE):
+    def __init__(self, delta=0.08, phase_delta=0.1, val_range=3, MAX_RANGE=60, frame_size=DEFAULT_SIZE):
         self.delta = delta
         self.phase = 0
         self.phase_delta = phase_delta
         self.v_range = val_range
+        self.MAX_RANGE = MAX_RANGE
+
+    def set_intensity(self, intensity):
+        self.v_range = intensity * 60
+
+    def reset(self):
+        pass
 
     def apply_filter(self, frame):
         for col in range(frame.shape[1]):
             frame[:, col, :] = np.roll(frame[:, col, :], int(np.sin(self.phase + self.delta * col) * self.v_range), 0)
         self.phase += self.phase_delta
 
+class Mirror_effect:
+    def __init__(self, thresh=0.5):
+        self.thresh = 0.5
+        self.mirror = 1
+    def set_intensity(self, intensity):
+        if intensity > self.thresh:
+            self.mirror = -1
+        else:
+            self.mirror = 1
+    def reset(self):
+        pass
+
+    def apply_filter(self, frame):
+        rows, cols, _ = frame.shape
+        mid_frame = frame[:, cols // 4: 3 * cols // 4, :]
+        mirrored_mid_frame = cv2.flip(mid_frame, self.mirror)
+        frame[:,:,:] = np.concatenate((mid_frame, mirrored_mid_frame), axis=1)
+
 class Pixelate_filter:
-    def __init__(self, pixel_size, fr_size = DEFAULT_SIZE):
+    def __init__(self, pixel_size=20, fr_size = DEFAULT_SIZE):
         self.pixel_size = pixel_size
         self.fr_size = fr_size
 
-    def change_grain(self, sz):
-        self.pixel_size = sz
+    def set_intensity(self, intensity):
+        self.pixel_size = int(intensity * 40) + 1
+
+    def reset(self):
+        pass
 
     def apply_filter(self, frame):
         tmp = cv2.resize(frame,
@@ -169,108 +244,37 @@ class Pixelate_filter:
                            self.fr_size,
                            interpolation=cv2.INTER_NEAREST)
 
-class Pixelate_grad_filter:
-    def __init__(self, pixel_size_start, pixel_size_end, time_per_res=5*10**5, pixel_size_delta=5):
-        self.px_size_end = pixel_size_end
-        self.px_size_start = pixel_size_start
-        self.pixelate_filter = Pixelate_filter(pixel_size_start)
-        self.pixel_size_delta = pixel_size_delta
-        self.time_per_res = time_per_res #time spent on each grain size
-        self.grow = True
-        self.res_change_time = datetime.now()
-
-    def apply_filter(self, frame):
-        time_dif = (datetime.now() - self.res_change_time).microseconds
-        if (time_dif >= self.time_per_res):
-            if self.grow:
-                self.pixelate_filter.pixel_size += self.pixel_size_delta
-                if self.pixelate_filter.pixel_size > self.px_size_end:
-                    self.pixelate_filter.pixel_size = self.px_size_end
-                    self.px_size_end, self.px_size_start = self.px_size_start, self.px_size_end
-                    self.grow = False
-            else:
-                self.pixelate_filter.pixel_size -= self.pixel_size_delta
-                if self.pixelate_filter.pixel_size < self.px_size_end:
-                    self.pixelate_filter.pixel_size = self.px_size_end
-                    self.px_size_end, self.px_size_start = self.px_size_start, self.px_size_end
-                    self.grow = True
-            self.res_change_time = datetime.now()
-        self.pixelate_filter.apply_filter(frame)
-
-class Blur_filter:
-    def __init__(self, blur_intensity=15):
-        self.intensity = blur_intensity
-        self.pixelate_filter = Pixelate_filter(10)
-        self.pixel_size = blur_intensity
-        self.fr_size = DEFAULT_SIZE
-
-    def apply_filter(self, frame):
-        frame = cv2.resize(frame,
-                           (self.fr_size[0] // self.pixel_size, self.fr_size[1] // self.pixel_size),
-                           interpolation=cv2.INTER_NEAREST)
-        frame = cv2.resize(frame,
-                           self.fr_size,
-                           interpolation=cv2.INTER_CUBIC)
-        frame = cv2.GaussianBlur(frame, (5,5), 0.5)
-        return frame
-
 class Border_filter:
     def __init__(self, frame_size=DEFAULT_SIZE):
         self.kernel = np.array([[0, -1, 0],
                                [-1, 4, -1],
                                [0, -1, 0]])
+        self.intensity = 100
+
+    def set_intensity(self, intensity):
+        self.intensity = 80 * (1 - intensity)
+
+    def reset(self):
+        pass
 
     def apply_filter(self, frame):
         for i in range(0, 3):
-            frame[:,:,i] *= cv2.Canny(frame[:,:,i], 35, 35).astype("uint8") // 255
+            frame[:,:,i] *= cv2.Canny(frame[:,:,i], self.intensity, self.intensity).astype("uint8") // 255
 
 class Negative_filter:
     def __init__(self):
+        pass
+
+    def set_intensity(self, intensity):
+        pass
+
+    def reset(self):
         pass
 
     def apply_filter(self, frame):
         frame[:,:,:] = 255 - frame
 
 #class Strange_offsets_filter:
-
-class Duatone_filter:
-    def __init__(self, threshold=127):
-        self.thresh = threshold
-
-    def apply_filter(self, frame):
-        tmp = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        _, template_mask = cv2.threshold(tmp, self.thresh, 1, cv2.THRESH_BINARY_INV)
-        frame[:,:,1] *= template_mask
-        frame[:,:,2] *= (1 - template_mask)
-
-class Duatone_grad_filter:
-    def __init__(self, start_thresh, end_thresh, delta=20, nsecs_per_thresh=1*10**4):
-        self.thresh_end = end_thresh
-        self.thresh_start = start_thresh
-        self.duatone_filter = Duatone_filter(threshold=start_thresh)
-        self.thresh_delta = delta
-        self.time_per_thresh = nsecs_per_thresh #time spent on each grain size
-        self.grow = True
-        self.res_change_time = datetime.now()
-
-    def apply_filter(self, frame):
-        time_dif = (datetime.now() - self.res_change_time).microseconds
-        if (time_dif >= self.time_per_thresh):
-            if self.grow:
-                self.duatone_filter.thresh += self.thresh_delta
-                if self.duatone_filter.thresh > self.thresh_end:
-                    self.duatone_filter.thresh = self.thresh_end
-                    self.thresh_end, self.thresh_start = self.thresh_start, self.thresh_end
-                    self.grow = False
-            else:
-                self.duatone_filter.thresh -= self.thresh_delta
-                if self.duatone_filter.thresh < self.thresh_end:
-                    self.duatone_filter.thresh = self.thresh_end
-                    self.thresh_end, self.thresh_start = self.thresh_start, self.thresh_end
-                    self.grow = True
-            self.res_change_time = datetime.now()
-        self.duatone_filter.apply_filter(frame)
-
 
 class White_noise_filter:
     def __init__(self, size=DEFAULT_SIZE, frames=10, layer_weights=(0.5, 0.5, 0.5)):
@@ -279,6 +283,12 @@ class White_noise_filter:
         self.layer_weights = np.array(layer_weights)
         self.number = 0
 
+    def set_intensity(self, intensity):
+        self.layer_weights = np.array((0.1, 0.1, 0.1)) + intensity * 0.8
+
+    def reset(self):
+        pass
+
     def apply_filter(self, frame):
         self.number += 1
         self.number %= self.noise.shape[2]
@@ -286,8 +296,8 @@ class White_noise_filter:
         print(frame[:,:,0].shape)
         #frame.astype("double") *= self.layer_weights
         for i in range(3):
-            frame[:,:,i] = cv2.addWeighted(frame[:,:,i], self.layer_weights[i],
-                            self.noise[:,:,self.number], 1 - self.layer_weights[i],
+            frame[:,:,i] = cv2.addWeighted(frame[:,:,i], 1 - self.layer_weights[i],
+                            self.noise[:,:,self.number], self.layer_weights[i],
                             0)
             #frame[:,:,i] *= self.layer_weights[i]
             #frame[:,:,i] += self.noise[:, :, self.number] * self.inverse_wrights[i]
@@ -323,6 +333,12 @@ class Circle_grad_filter:
         self.circle_filter = Circle_filter(radius=150, angle=0)
         self.time_per_angle = time_delta
 
+    def set_intensity(self, intensity):
+        self.angle_delta = 1.5 + intensity * 3
+
+    def reset(self):
+        self.circle_filter.set_angle(0)
+
     def apply_filter(self, frame):
         time_dif = (datetime.now() - self.prev_change_time).microseconds
         if (time_dif >= self.time_per_angle):
@@ -352,23 +368,58 @@ class Circle_grad_filter:
 #        return frame_comp + frame
 
 class Color_plane_filter:
-    def __init__(self, color=(0xb4, 0x69, 0xff)):
+    def __init__(self, color=(0xb4, 0x69, 0xff), alpha=1):
         self.color = np.array(color, dtype="double")
+        self.alpha = 0
+
+    def set_intensity(self, intensity):
+        self.alpha = intensity
+
+    def reset(self):
+        pass
 
     def apply_filter(self, frame):
         #calc projection
         #frame = 255 - frame
         #proj_coeffs = np.dot(frame, self.color) / np.dot(self.color, self.color)
         #proj_coeffs = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) / 255
-        proj_coeffs = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) / 255
-        for i in range(3):
-            frame[:,:,i] = proj_coeffs * self.color[i]
+        proj_coeffs = (self.color * cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)[:,:,None] / 255).astype("uint8")
+        frame[:,:,:] = cv2.addWeighted(proj_coeffs, self.alpha,
+                                           frame, 1 - self.alpha, 0)
+
+class Duatone_filter:
+    def __init__(self, threshold=127, dua_layers=(1, 2), other_layer=(0, 1)):
+        self.thresh = threshold
+        self.other_layer = other_layer
+        self.dua_layers = dua_layers
+
+    def set_intensity(self, intensity):
+        self.thresh = 130 * intensity + 20
+
+    def reset(self):
+        pass
+
+    def apply_filter(self, frame):
+        tmp = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        _, template_mask = cv2.threshold(tmp, self.thresh, 1, cv2.THRESH_BINARY_INV)
+        frame[:,:,self.other_layer[0]] *= self.other_layer[1]
+        frame[:,:,self.dua_layers[0]] *= template_mask
+        frame[:,:,self.dua_layers[1]] *= (1 - template_mask)
 
 class RGB_shift_filter:
-    def __init__(self, R_SHIFT=5, G_SHIFT=5, B_SHIFT=5):
+    def __init__(self, R_SHIFT=5, G_SHIFT=5, B_SHIFT=5, GAIN=40):
         self.R_SHIFT = R_SHIFT
         self.G_SHIFT = G_SHIFT
         self.B_SHIFT = B_SHIFT
+        self.GAIN = GAIN
+
+    def set_intensity(self, intensity):
+        self.R_SHIFT = int(self.GAIN * intensity) + 1
+        self.G_SHIFT = int(self.GAIN * intensity) + 1
+        self.B_SHIFT = int(self.GAIN * intensity) + 1
+
+    def reset(self):
+        pass
 
     def apply_filter(self, frame):
         frame[:,:,0] = np.pad(frame[:,:,0], ((0, 0), (self.R_SHIFT, 0)), 'constant', constant_values=(0))[:,:-self.R_SHIFT]
@@ -414,15 +465,47 @@ class Kaleidoscope8_filter:
                                                                                     self.fr_size[0] - l_border:,
                                                                                     :], 0)
 
+class Kaleidoscope_grad_filter:
+    def __init__(self, thresh_int=(0.33, 0.66, 1)):
+        self.kaleids = [Kaleidoscope_filter(HOR=True, VERT=False),
+                        Kaleidoscope_filter(HOR=True, VERT=True),
+                        Kaleidoscope8_filter()]
+        self.intensity = 0
+        self.thresh = thresh_int
 
-class Effects_generator:
-    def __init__(self, ):
-        self.direction = 0 #-1 left, 0 static, 1 right
-        self.dist = 0 #val from 0 to TODO
-        self.filters = list()
-        self.filters.append(Circle_grad_fliter()) #0 the further it is the greater the speed
-        self.filters.append(Displacement_filter("PATH TO BALLS", (0, 50)))
+    def set_intensity(self, intens):
+        for i in range(3):
+            if (intens <= self.thresh[i]):
+                self.intensity = i
+                break
 
     def apply_filter(self, frame):
+        self.kaleids[self.intensity].apply_filter(frame)
+
+    def reset(self):
         pass
 
+class Multiply_filter:
+    def __init__(self):
+        self.factor = 2
+
+    def set_intensity(self, intensity):
+        self.factor = 2**int(intensity * 3) * 2
+        #self.factor = int(intensity * 3) * 2 + 2
+
+    def reset(self):
+        pass
+
+    def apply_filter(self, frame):
+        small_frame = cv2.resize(frame, None,
+                                 fx=1/self.factor, fy=1/self.factor,
+                                 interpolation=cv2.INTER_AREA)[:frame.shape[0] // self.factor,
+                                                               :frame.shape[1] // self.factor,
+                                                               :]
+        tmp = small_frame
+        for i in range(self.factor - 1):
+            tmp = np.concatenate((tmp, small_frame), axis=1)
+        small_frame = tmp
+        for i in range(self.factor - 1):
+            tmp = np.concatenate((tmp, small_frame), axis=0)
+        frame[:,:,:] = tmp
