@@ -11,10 +11,7 @@ from tqdm import tqdm
 DEFAULT_SIZE = (1920, 1080)
 
 def alpha_add(dst, dst_a, src, src_a): #alpha channels contain values from 0 to 255
-    tmp = src.astype("int32")
-    tmp *= src_a
-    tmp += dst.astype("int32") * dst_a
-    dst[:,:,:] = (tmp // 255).astype("uint8")
+    dst[:,:,:] = (dst * dst_a + src * src_a)
 
 class No_filter:
     def __init__(self):
@@ -52,9 +49,14 @@ class Png_overlay_filter:
             #overlay_mask = cv2.cvtColor(tmp, cv2.COLOR_BGR2GRAY)
             #_, overlay_mask = cv2.threshold(overlay_mask, 10, 1, cv2.THRESH_BINARY_INV)
             self.image_seq.append(tmp[:,:,0:3])
-            self.image_overlay.append(tmp[:,:,3])
+            self.image_overlay.append(tmp[:,:,3] / 255)
         self.frame_total = len(self.image_seq)
         print(self.frame_total)
+
+    def set_intensity(self, a):
+        pass
+    def reset(self):
+        pass
 
 
 
@@ -68,7 +70,7 @@ class Png_overlay_filter:
         #frame *= (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
         #frame += (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
         #frame[:,:,:] = (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
-        alpha_add(frame, (255 - overlay_mask), cur_image, overlay_mask)
+        alpha_add(frame, (1 - overlay_mask), cur_image, overlay_mask)
         time_dif = (datetime.now() - self.frame_change_time).microseconds
         #print(time_dif)
         if (time_dif >= self.frame_t_delta):
@@ -125,7 +127,7 @@ class Displacement_mapping_filter:
         frame += template_frame
 
 class Displacement_zoom_filter:
-    def __init__(self, template_name, offset=(40,40), frame_size=DEFAULT_SIZE, max_zoom=2):
+    def __init__(self, template_name, offset=(20,20), frame_size=DEFAULT_SIZE, max_zoom=1):
         tmp = cv2.imread(template_name)
         tmp = cv2.resize(tmp, frame_size, interpolation=cv2.INTER_AREA)
         self.tmp = template_name
@@ -140,6 +142,8 @@ class Displacement_zoom_filter:
         self.fr_size = np.array(frame_size, dtype="int")
 
     def set_intensity(self, intensity):
+        #self.mask = self.template_mask
+        #return
         gain = 1 + intensity * self.max_zoom
         borders = (gain * self.fr_size - self.fr_size) / 2
         borders = borders.astype("int")
@@ -189,7 +193,7 @@ class Horizontal_sin_effect:
         return frame
 
 class Vertical_sin_effect:
-    def __init__(self, delta=0.08, phase_delta=0.1, val_range=3, MAX_RANGE=60, frame_size=DEFAULT_SIZE):
+    def __init__(self, delta=0.08, phase_delta=0.1, val_range=3, MAX_RANGE=5, frame_size=DEFAULT_SIZE):
         self.delta = delta
         self.phase = 0
         self.phase_delta = phase_delta
@@ -197,7 +201,7 @@ class Vertical_sin_effect:
         self.MAX_RANGE = MAX_RANGE
 
     def set_intensity(self, intensity):
-        self.v_range = intensity * 60
+        self.v_range = intensity * self.MAX_RANGE
 
     def reset(self):
         pass
@@ -243,6 +247,39 @@ class Pixelate_filter:
         frame[:,:,:] = cv2.resize(tmp,
                            self.fr_size,
                            interpolation=cv2.INTER_NEAREST)
+
+class Pixelate_grad_filter:
+    def __init__(self, pixel_size_start=1, pixel_size_end=50, time_per_res=5*10**4, pixel_size_delta=7):
+        self.px_size_end = pixel_size_end
+        self.px_size_start = pixel_size_start
+        self.pixelate_filter = Pixelate_filter(pixel_size_start)
+        self.pixel_size_delta = pixel_size_delta
+        self.time_per_res = time_per_res #time spent on each grain size
+        self.grow = True
+        self.res_change_time = datetime.now()
+
+    def set_intensity(self,a):
+        pass
+    def reset(self):
+        pass
+
+    def apply_filter(self, frame):
+        time_dif = (datetime.now() - self.res_change_time).microseconds
+        if (time_dif >= self.time_per_res):
+            if self.grow:
+                self.pixelate_filter.pixel_size += self.pixel_size_delta
+                if self.pixelate_filter.pixel_size > self.px_size_end:
+                    self.pixelate_filter.pixel_size = self.px_size_end
+                    self.px_size_end, self.px_size_start = self.px_size_start, self.px_size_end
+                    self.grow = False
+            else:
+                self.pixelate_filter.pixel_size -= self.pixel_size_delta
+                if self.pixelate_filter.pixel_size < self.px_size_end:
+                    self.pixelate_filter.pixel_size = self.px_size_end
+                    self.px_size_end, self.px_size_start = self.px_size_start, self.px_size_end
+                    self.grow = True
+            self.res_change_time = datetime.now()
+        self.pixelate_filter.apply_filter(frame)
 
 class Border_filter:
     def __init__(self, frame_size=DEFAULT_SIZE):
@@ -302,51 +339,59 @@ class White_noise_filter:
             #frame[:,:,i] *= self.layer_weights[i]
             #frame[:,:,i] += self.noise[:, :, self.number] * self.inverse_wrights[i]
 
-class Circle_filter:
-    def __init__(self, size=DEFAULT_SIZE, radius=100, angle=20):
+class Rotate_filter:
+    def __init__(self, PNG_DIR, size=DEFAULT_SIZE, angle=20):
         tmp = (size[1], size[0])
-        self.shape = tmp
-        self.circle_filter = np.zeros(tmp, dtype="uint8")
-        self.circle_filter = cv2.circle(self.circle_filter, (tmp[1] // 2, tmp[0] // 2), radius, 1, thickness=-1)
-        self.circle_filter = self.circle_filter[:,:,None]
-        self.circle_filter_outer = 1 - self.circle_filter
-        #self.circle_filter_outer = np.ones(tmp, dtype="uint8")
-        #self.circle_filter_outer = cv2.circle(self.circle_filter_outer, (tmp[1] // 2, tmp[0] // 2), radius, 0, thickness=-1)
-        #self.circle_filter_outer = self.circle_filter_outer[:,:,None]
+        self.size = tmp
+        self.shape = (cv2.imread(PNG_DIR, cv2.IMREAD_UNCHANGED)[:,:,3].astype("uint8") // 255)[:,:,None]
+        self.shape_outer = 1 - self.shape
         self.angle = angle
         self.rot_matrix = cv2.getRotationMatrix2D((tmp[1]//2, tmp[0]//2),  angle, 1)
 
     def set_angle(self, angle):
-        self.rot_matrix = cv2.getRotationMatrix2D((self.shape[1]//2, self.shape[0]//2),  angle, 1)
+        self.rot_matrix = cv2.getRotationMatrix2D((self.size[1]//2, self.size[0]//2),  angle, 1)
         self.angle = angle
 
     def apply_filter(self, frame):
-        frame_comp = cv2.warpAffine(frame, self.rot_matrix, (self.shape[1], self.shape[0]))
-        frame_comp *= self.circle_filter
-        frame *= self.circle_filter_outer
+        frame_comp = cv2.warpAffine(frame, self.rot_matrix, (self.size[1], self.size[0]))
+        frame_comp *= self.shape
+        frame *= self.shape_outer
         frame += frame_comp
 
-class Circle_grad_filter:
-    def __init__(self, angle_delta=4, time_delta=0.1*10**5):
+class Rotate_grad_filter:
+    def __init__(self, PNG_DIR, angle_delta=8, time_delta=10**3, max_angle=0):
         self.prev_change_time = datetime.now()
         self.angle_delta = angle_delta
-        self.circle_filter = Circle_filter(radius=150, angle=0)
+        self.rotate_filter = Rotate_filter(PNG_DIR, angle=0)
         self.time_per_angle = time_delta
+        self.MAX_ANGLE = max_angle
+        self.grow=True
 
     def set_intensity(self, intensity):
-        self.angle_delta = 1.5 + intensity * 3
+        pass
 
     def reset(self):
-        self.circle_filter.set_angle(0)
+        self.rotate_filter.set_angle(0)
+        self.grow = True
 
     def apply_filter(self, frame):
-        time_dif = (datetime.now() - self.prev_change_time).microseconds
+        time_dif = (datetime.now() - self.prev_change_time)
+        time_dif = time_dif.microseconds + 10**6 * time_dif.seconds
         if (time_dif >= self.time_per_angle):
-            self.circle_filter.set_angle(self.angle_delta + self.circle_filter.angle)
-            if self.circle_filter.angle >= 360:
-                self.circle_filter.set_angle(self.circle_filter.angle - 360)
+            if self.rotate_filter.angle + self.angle_delta >= 360:
+                self.rotate_filter.set_angle(self.angle_delta + self.rotate_filter.angle - 360)
+            else:
+                self.rotate_filter.set_angle(self.angle_delta + self.rotate_filter.angle)
             self.prev_change_time = datetime.now()
-        self.circle_filter.apply_filter(frame)
+        #    if self.grow:
+        #        if self.rotate_filter.angle + self.angle_delta >= self.MAX_ANGLE:
+        #            self.grow = False
+        #        self.rotate_filter.set_angle(self.angle_delta + self.rotate_filter.angle)
+        #    else:
+        #        if self.rotate_filter.angle - self.angle_delta <= -self.MAX_ANGLE:
+        #            self.grow = True
+        #        self.rotate_filter.set_angle(-self.angle_delta + self.rotate_filter.angle)
+        self.rotate_filter.apply_filter(frame)
 
 #class Circle_filter:
 #    def __init__(self, size=DEFAULT_SIZE, radius=100, angle=20):
@@ -388,23 +433,26 @@ class Color_plane_filter:
                                            frame, 1 - self.alpha, 0)
 
 class Duatone_filter:
-    def __init__(self, threshold=127, dua_layers=(1, 2), other_layer=(0, 1)):
+    def __init__(self, threshold=60, dua_layers=(1, 2), other_layer=(0, 1)):
         self.thresh = threshold
         self.other_layer = other_layer
         self.dua_layers = dua_layers
 
     def set_intensity(self, intensity):
-        self.thresh = 130 * intensity + 20
+        pass
 
     def reset(self):
         pass
 
     def apply_filter(self, frame):
         tmp = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        _, template_mask = cv2.threshold(tmp, self.thresh, 1, cv2.THRESH_BINARY_INV)
-        frame[:,:,self.other_layer[0]] *= self.other_layer[1]
-        frame[:,:,self.dua_layers[0]] *= template_mask
-        frame[:,:,self.dua_layers[1]] *= (1 - template_mask)
+        _, template_mask1 = cv2.threshold(tmp, self.thresh, 1, cv2.THRESH_BINARY_INV)
+        _, template_mask2 = cv2.threshold(tmp, self.thresh, 1, cv2.THRESH_BINARY)
+        #frame[:,:,self.other_layer[0]] *= self.other_layer[1]
+        frame[:,:,self.dua_layers[0]] *= template_mask1
+        frame[:,:,self.dua_layers[1]] *= template_mask2
+        frame[:,:,:] = cv2.medianBlur(frame, 5)
+        #frame[:,:,:] = cv2.GaussianBlur(frame, (6,6),0)
 
 class RGB_shift_filter:
     def __init__(self, R_SHIFT=5, G_SHIFT=5, B_SHIFT=5, GAIN=40):
@@ -490,8 +538,8 @@ class Multiply_filter:
         self.factor = 2
 
     def set_intensity(self, intensity):
-        self.factor = 2**int(intensity * 3) * 2
-        #self.factor = int(intensity * 3) * 2 + 2
+        #self.factor = 2**int(intensity * 3) * 2
+        self.factor = int(intensity * 2) * 2 + 1
 
     def reset(self):
         pass
