@@ -44,12 +44,16 @@ class Png_overlay_filter:
         file_names.sort()
         print("loading pics from", png_dir)
         for frame_name in tqdm(file_names):
+            print(png_dir + frame_name)
             tmp = cv2.imread(png_dir + frame_name, cv2.IMREAD_UNCHANGED).astype("uint8")
-            tmp = cv2.resize(tmp, seq_size, interpolation=cv2.INTER_AREA)
+            #tmp = cv2.resize(tmp, seq_size, interpolation=cv2.INTER_AREA)
             #overlay_mask = cv2.cvtColor(tmp, cv2.COLOR_BGR2GRAY)
             #_, overlay_mask = cv2.threshold(overlay_mask, 10, 1, cv2.THRESH_BINARY_INV)
             self.image_seq.append(tmp[:,:,0:3])
-            self.image_overlay.append(tmp[:,:,3] / 255)
+            if (tmp.shape[2] == 4):
+                self.image_overlay.append(tmp[:,:,3] / 255)
+            else:
+                self.image_overlay.append(cv2.threshold(cv2.cvtColor(tmp, cv2.COLOR_BGR2GRAY), 10, 1, cv2.THRESH_BINARY_INV)[1])
         self.frame_total = len(self.image_seq)
         print(self.frame_total)
 
@@ -61,9 +65,10 @@ class Png_overlay_filter:
 
 
     def apply_filter(self, frame):
-        cur_image = cv2.resize(self.image_seq[self.cur_frame], self.fr_size, interpolation=cv2.INTER_NEAREST)
-        overlay_mask = cv2.resize(self.image_overlay[self.cur_frame], self.fr_size, interpolation=cv2.INTER_NEAREST)
-        #overlay_mask = self.image_overlay[self.cur_frame]
+        #cur_image = cv2.resize(self.image_seq[self.cur_frame], self.fr_size, interpolation=cv2.INTER_NEAREST)
+        #overlay_mask = cv2.resize(self.image_overlay[self.cur_frame], self.fr_size, interpolation=cv2.INTER_NEAREST)
+        overlay_mask = self.image_overlay[self.cur_frame]
+        cur_image = self.image_seq[self.cur_frame]
 
         #overlay_mask = np.repeat(overlay_mask, 3).reshape((480, 640, 3))
         overlay_mask = overlay_mask[:,:,None]
@@ -71,12 +76,13 @@ class Png_overlay_filter:
         #frame += (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
         #frame[:,:,:] = (frame * (1 - overlay_mask) + cur_image * overlay_mask).astype("uint8")
         alpha_add(frame, (1 - overlay_mask), cur_image, overlay_mask)
-        time_dif = (datetime.now() - self.frame_change_time).microseconds
+        time_dif = datetime.now() - self.frame_change_time
+        time_dif = time_dif.microseconds + time_dif.seconds * 10**6
         #print(time_dif)
         if (time_dif >= self.frame_t_delta):
             self.cur_frame = (self.cur_frame + 1) % self.frame_total
-            if (self.cur_frame == 0):
-                print("done")
+            #if (self.cur_frame == 0):
+            #    print("done")
             self.frame_change_time = datetime.now()
 
 class Motion_blur_filter:
@@ -142,15 +148,8 @@ class Displacement_zoom_filter:
         self.fr_size = np.array(frame_size, dtype="int")
 
     def set_intensity(self, intensity):
-        #self.mask = self.template_mask
-        #return
-        gain = 1 + intensity * self.max_zoom
-        borders = (gain * self.fr_size - self.fr_size) / 2
-        borders = borders.astype("int")
-        self.mask = cv2.resize(self.template_mask, None, fx=gain, fy=gain,
-                                        interpolation=cv2.INTER_AREA)[borders[1]:borders[1] + self.template_mask.shape[0],
-                                                                      borders[0]:borders[0] + self.template_mask.shape[1],
-                                                                      None]
+        self.mask = self.template_mask
+        return
     def reset(self):
         pass
 
@@ -197,11 +196,11 @@ class Vertical_sin_effect:
         self.delta = delta
         self.phase = 0
         self.phase_delta = phase_delta
-        self.v_range = val_range
+        self.v_range = MAX_RANGE
         self.MAX_RANGE = MAX_RANGE
 
     def set_intensity(self, intensity):
-        self.v_range = intensity * self.MAX_RANGE
+        pass
 
     def reset(self):
         pass
@@ -289,7 +288,8 @@ class Border_filter:
         self.intensity = 100
 
     def set_intensity(self, intensity):
-        self.intensity = 80 * (1 - intensity)
+        #self.intensity = 80 * (1 - intensity)
+        self.intensity = 40
 
     def reset(self):
         pass
@@ -329,8 +329,6 @@ class White_noise_filter:
     def apply_filter(self, frame):
         self.number += 1
         self.number %= self.noise.shape[2]
-        print(self.noise[:,:,0].shape)
-        print(frame[:,:,0].shape)
         #frame.astype("double") *= self.layer_weights
         for i in range(3):
             frame[:,:,i] = cv2.addWeighted(frame[:,:,i], 1 - self.layer_weights[i],
@@ -448,10 +446,10 @@ class Duatone_filter:
         tmp = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         _, template_mask1 = cv2.threshold(tmp, self.thresh, 1, cv2.THRESH_BINARY_INV)
         _, template_mask2 = cv2.threshold(tmp, self.thresh, 1, cv2.THRESH_BINARY)
-        #frame[:,:,self.other_layer[0]] *= self.other_layer[1]
+        frame[:,:,self.other_layer[0]] *= self.other_layer[1]
         frame[:,:,self.dua_layers[0]] *= template_mask1
         frame[:,:,self.dua_layers[1]] *= template_mask2
-        frame[:,:,:] = cv2.medianBlur(frame, 5)
+        #frame[:,:,:] = cv2.medianBlur(frame, 11)
         #frame[:,:,:] = cv2.GaussianBlur(frame, (6,6),0)
 
 class RGB_shift_filter:
@@ -481,6 +479,10 @@ class Kaleidoscope_filter:
         self.hor = HOR
         self.vert = VERT
 
+    def set_intensity(self, a):
+        pass
+    def reset(self):
+        pass
 
     def apply_filter(self, frame):
         if self.hor:
@@ -494,6 +496,11 @@ class Kaleidoscope8_filter:
         self.target_side = min(size[0], size[1]) // 2
         self.diag_filter = np.ones((self.target_side, self.target_side), dtype="uint8")
         self.diag_filter = np.triu(self.diag_filter)[:,:,None]
+
+    def set_intensity(self, a):
+        pass
+    def reset(self):
+        pass
 
     def apply_filter(self, frame):
         fragment = frame[:self.target_side,
